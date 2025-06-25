@@ -102,14 +102,10 @@ This sequence of operators and Subjects creates a robust and efficient data stre
 
 This is a common and highly effective pattern for managing state in Flutter apps using BLoC, and RxDart provides the perfect tools for it.
 
----
-
-## COMMON QUESTI
-
 
 ==========
 
-## Desvendando o Coração do RxDart com BLoC 
+## Desvendando o Coração do RxDart com BLoC (PT)
 
 Vamos quebrar em partes, explicando cada termo e como eles trabalham juntos.
 

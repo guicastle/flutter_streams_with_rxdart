@@ -102,105 +102,6 @@ This sequence of operators and Subjects creates a robust and efficient data stre
 
 This is a common and highly effective pattern for managing state in Flutter apps using BLoC, and RxDart provides the perfect tools for it.
 
-
-==========
-
-## Desvendando o Coração do RxDart com BLoC (PT)
-
-Vamos quebrar em partes, explicando cada termo e como eles trabalham juntos.
-
-#### **1. `PublishSubject` e `Sink` (A Entrada de Dados)**
-
-```dart
-final _searchQueryController = PublishSubject<String>();
-Sink<String> get searchQuery => _searchQueryController.sink;
-```
-
-  * **`PublishSubject<String>()`**:
-      * No RxDart, um **`Subject`** é uma espécie de "Stream controller" que também é uma `Stream`. Ele permite que você adicione dados a ele (como um **`Sink`**) e também "escutar" esses dados (como uma **`Stream`**).
-      * O **`PublishSubject`** é um tipo específico de `Subject`. A palavra "Publish" é chave aqui: ele só **publica (emite) eventos para os observadores (quem está escutando) que se inscreveram *depois* que o evento foi adicionado**. Se você adicionar um valor ao `PublishSubject` e, em seguida, alguém se inscrever, esse novo assinante **não receberá** o valor que foi adicionado antes de sua inscrição.
-      * Nesse caso, `PublishSubject<String>` significa que ele vai emitir `String`s. Ele é perfeito para a entrada do termo de busca porque você geralmente só quer reagir às novas digitações que ocorrem *agora*, e não às que aconteceram antes do `TextField` ser renderizado ou re-conectado.
-  * **`Sink<String> get searchQuery => _searchQueryController.sink;`**:
-      * Um **`Sink`** é o "lado de entrada" de uma `Stream`. Ele tem um método `add()` que você usa para "jogar" dados na Stream.
-      * Aqui, `_searchQueryController.sink` nos dá acesso a esse `Sink`. Ao expor `searchQuery` como um `Sink`, garantimos que outras partes do código (como o `TextField` na sua UI) só podem **adicionar** dados ao `_searchQueryController`, mas não podem "escutar" ou manipular a `Stream` diretamente. Isso é uma boa prática de **encapsulamento**, mantendo a lógica interna do BLoC protegida.
-      * No seu `TextField`, quando você faz `_searchBloc.searchQuery.add(text);`, é exatamente para esse `Sink` que você está enviando o texto digitado.
-
------
-
-#### **2. `BehaviorSubject` e `Stream` (A Saída de Dados)**
-
-```dart
-final _searchResultsController = BehaviorSubject<List<String>>.seeded([]);
-Stream<List<String>> get searchResults => _searchResultsController.stream;
-```
-
-  * **`BehaviorSubject<List<String>>.seeded([])`**:
-      * Outro tipo de `Subject`. O **`BehaviorSubject`** é diferente do `PublishSubject` porque ele **sempre armazena o último valor que foi emitido**.
-      * Quando um novo observador (alguém que vai "escutar") se inscreve no `BehaviorSubject`, ele **recebe imediatamente o último valor emitido** e, a partir daí, passa a receber todos os valores subsequentes.
-      * O método `.seeded([])` é usado para fornecer um **valor inicial** para o `BehaviorSubject`. Isso é super útil em interfaces de usuário. No seu app, quando a tela de busca é carregada pela primeira vez, o `StreamBuilder` que está "escutando" `searchResults` imediatamente recebe essa lista vazia `[]`. Isso evita que a UI comece sem nenhum dado ou mostre um erro de "sem dados" antes mesmo de qualquer busca ser feita.
-      * `BehaviorSubject<List<String>>` indica que ele vai emitir listas de strings (seus resultados de busca).
-  * **`Stream<List<String>> get searchResults => _searchResultsController.stream;`**:
-      * Esta linha expõe o "lado de saída" do `_searchResultsController` como uma **`Stream`**.
-      * A UI (o `StreamBuilder` no seu caso) vai "escutar" essa `Stream`. Sempre que o `_searchResultsController.add(results)` for chamado dentro do BLoC, um novo conjunto de resultados será enviado por essa `Stream`, e o `StreamBuilder` será notificado para reconstruir a interface com os novos dados.
-
------
-
-#### **3. A Pipeline de Operadores (`debounceTime`, `distinct`, `switchMap`)**
-
-```dart
-_searchQueryController.stream
-    .debounceTime(const Duration(milliseconds: 300)) // Espera 300ms de "silêncio"
-    .distinct() // Ignora termos repetidos
-    .switchMap((query) => Stream.fromFuture(_searchService.search(query))) // Cancela buscas antigas
-    .listen(
-      (results) {
-        _searchResultsController.add(results); // Envia os resultados para a UI
-      },
-      onError: (error) {
-        print('!!! ERRO no BLoC: $error');
-        _searchResultsController.addError(error); // Encaminha o erro
-      },
-    );
-```
-
-Este é o **coração reativo** do BLoC. Imagine que `_searchQueryController.stream` é o ponto de partida, e cada operador é uma estação de tratamento por onde os dados de busca passam antes de se tornarem resultados.
-
-  * **`_searchQueryController.stream`**: É a `Stream` de onde os termos de busca digitados pelo usuário começam a fluir.
-  * **`.debounceTime(const Duration(milliseconds: 300))`**:
-      * Este é um **operador de tempo**. Ele atua como um "silenciador".
-      * Quando o usuário digita rapidamente (ex: "a", "ap", "app"), cada letra é um evento na `Stream`. Sem `debounceTime`, cada digitação dispararia uma busca na API.
-      * O `debounceTime` espera 300 milissegundos. Se um novo evento (uma nova letra digitada) chega **antes** que os 300ms se passem desde o último evento, o timer é **reiniciado**.
-      * Só quando há um "silêncio" de 300ms (ou mais) após a última digitação é que o termo de busca final é emitido para o próximo operador. Isso é excelente para economizar chamadas de rede e otimizar a performance.
-  * **`.distinct()`**:
-      * Este é um **operador de filtragem**. Ele garante que um evento só será emitido para o próximo operador se for **diferente do evento *imediatamente anterior***.
-      * Por exemplo, se o usuário digitar "apple", apagar, e digitar "apple" novamente (exatamente a mesma string), o `distinct()` ignorará a segunda emissão se o valor for idêntico ao que passou por ele por último. Isso evita buscas desnecessárias para o mesmo termo.
-  * **`.switchMap((query) => Stream.fromFuture(_searchService.search(query)))`**:
-      * Este é um dos operadores mais poderosos e essenciais para cenários como busca. Ele é um **operador de transformação e achatamento**.
-      * **Transformação**: A função `(query) => Stream.fromFuture(_searchService.search(query))` pega o `query` (a string de busca) e o usa para chamar `_searchService.search(query)`. Este método retorna um `Future<List<String>>` (que simula a resposta da API). O `Stream.fromFuture()` converte esse `Future` em uma `Stream`.
-      * **Achatamento e Cancelamento**: O "switch" no nome é a chave. Imagine que você está buscando por "ap" e uma requisição está em andamento. De repente, o usuário digita "app".
-          * Quando "app" chega ao `switchMap`, ele **cancela (descarta)** a `Stream` interna que foi criada para "ap" (se ela ainda não tiver terminado).
-          * Em seguida, ele cria uma **nova `Stream` interna** para "app" (chamando `_searchService.search('app')`) e passa a "escutar" apenas essa nova `Stream`.
-          * Isso garante que sua UI **sempre receba os resultados da busca mais recente** e não se preocupe com resultados de buscas antigas e obsoletas, que poderiam chegar fora de ordem ou após a busca mais recente.
-  * **`.listen(...)`**:
-      * Finalmente, depois que os dados de busca passaram por todos esses operadores e foram transformados em uma `List<String>` de resultados, o método `listen()` é chamado.
-      * O `listen` é o **observador** final. Ele recebe os `results` processados e os adiciona ao `_searchResultsController.add(results)`. Essa é a maneira como os resultados são "publicados" para a `Stream` de saída, que por sua vez, será "escutada" pelo `StreamBuilder` na sua interface de usuário, fazendo com que ela se atualize.
-      * O `onError` é uma parte crucial do `listen` para lidar com erros que podem ocorrer em qualquer parte da pipeline (por exemplo, se a `_searchService.search` lançar uma exceção). Ele captura o erro e o re-emite para a `_searchResultsController`, permitindo que o `StreamBuilder` mostre uma mensagem de erro na UI.
-
------
-
-### Por que essa combinação é poderosa?
-
-Essa sequência de operadores e Subjects cria um fluxo de dados robusto e eficiente:
-
-1.  **Entrada Reativa**: A UI joga dados no `Sink` (via `TextField`).
-2.  **Otimização**: `debounceTime` reduz o número de chamadas desnecessárias à API. `distinct` evita buscas para termos idênticos.
-3.  **Gerenciamento de Assincronia**: `switchMap` lida elegantemente com múltiplas requisições assíncronas, garantindo que apenas o resultado mais relevante (o da última busca) seja exibido.
-4.  **Saída Reativa**: Os resultados processados são emitidos para a `Stream` de saída, que atualiza a UI automaticamente.
-5.  **Estado Inicial e Encapsulamento**: `BehaviorSubject.seeded` oferece um estado inicial, e o uso de `Sink` e `Stream` para expor as interfaces de entrada e saída protege a lógica interna.
-
-Este é um padrão muito comum e eficaz para gerenciar o estado em aplicações Flutter com o BLoC, e o RxDart fornece as ferramentas perfeitas para isso.
-
-
 ------
 
 ## COMMON QUESTIONS
@@ -314,3 +215,102 @@ Future<void> loadAllProducts() async {
 * **`stream` (property)**: The **output of the conveyor belt**. It’s where items **come out** and can be "seen" by anyone interested. In code, you use `myStreamController.stream` to access the data flow and then either `.listen()` to it or connect it to a `StreamBuilder`.
 
 ---
+
+==========
+
+## Desvendando o Coração do RxDart com BLoC (PT)
+
+Vamos quebrar em partes, explicando cada termo e como eles trabalham juntos.
+
+#### **1. `PublishSubject` e `Sink` (A Entrada de Dados)**
+
+```dart
+final _searchQueryController = PublishSubject<String>();
+Sink<String> get searchQuery => _searchQueryController.sink;
+```
+
+  * **`PublishSubject<String>()`**:
+      * No RxDart, um **`Subject`** é uma espécie de "Stream controller" que também é uma `Stream`. Ele permite que você adicione dados a ele (como um **`Sink`**) e também "escutar" esses dados (como uma **`Stream`**).
+      * O **`PublishSubject`** é um tipo específico de `Subject`. A palavra "Publish" é chave aqui: ele só **publica (emite) eventos para os observadores (quem está escutando) que se inscreveram *depois* que o evento foi adicionado**. Se você adicionar um valor ao `PublishSubject` e, em seguida, alguém se inscrever, esse novo assinante **não receberá** o valor que foi adicionado antes de sua inscrição.
+      * Nesse caso, `PublishSubject<String>` significa que ele vai emitir `String`s. Ele é perfeito para a entrada do termo de busca porque você geralmente só quer reagir às novas digitações que ocorrem *agora*, e não às que aconteceram antes do `TextField` ser renderizado ou re-conectado.
+  * **`Sink<String> get searchQuery => _searchQueryController.sink;`**:
+      * Um **`Sink`** é o "lado de entrada" de uma `Stream`. Ele tem um método `add()` que você usa para "jogar" dados na Stream.
+      * Aqui, `_searchQueryController.sink` nos dá acesso a esse `Sink`. Ao expor `searchQuery` como um `Sink`, garantimos que outras partes do código (como o `TextField` na sua UI) só podem **adicionar** dados ao `_searchQueryController`, mas não podem "escutar" ou manipular a `Stream` diretamente. Isso é uma boa prática de **encapsulamento**, mantendo a lógica interna do BLoC protegida.
+      * No seu `TextField`, quando você faz `_searchBloc.searchQuery.add(text);`, é exatamente para esse `Sink` que você está enviando o texto digitado.
+
+-----
+
+#### **2. `BehaviorSubject` e `Stream` (A Saída de Dados)**
+
+```dart
+final _searchResultsController = BehaviorSubject<List<String>>.seeded([]);
+Stream<List<String>> get searchResults => _searchResultsController.stream;
+```
+
+  * **`BehaviorSubject<List<String>>.seeded([])`**:
+      * Outro tipo de `Subject`. O **`BehaviorSubject`** é diferente do `PublishSubject` porque ele **sempre armazena o último valor que foi emitido**.
+      * Quando um novo observador (alguém que vai "escutar") se inscreve no `BehaviorSubject`, ele **recebe imediatamente o último valor emitido** e, a partir daí, passa a receber todos os valores subsequentes.
+      * O método `.seeded([])` é usado para fornecer um **valor inicial** para o `BehaviorSubject`. Isso é super útil em interfaces de usuário. No seu app, quando a tela de busca é carregada pela primeira vez, o `StreamBuilder` que está "escutando" `searchResults` imediatamente recebe essa lista vazia `[]`. Isso evita que a UI comece sem nenhum dado ou mostre um erro de "sem dados" antes mesmo de qualquer busca ser feita.
+      * `BehaviorSubject<List<String>>` indica que ele vai emitir listas de strings (seus resultados de busca).
+  * **`Stream<List<String>> get searchResults => _searchResultsController.stream;`**:
+      * Esta linha expõe o "lado de saída" do `_searchResultsController` como uma **`Stream`**.
+      * A UI (o `StreamBuilder` no seu caso) vai "escutar" essa `Stream`. Sempre que o `_searchResultsController.add(results)` for chamado dentro do BLoC, um novo conjunto de resultados será enviado por essa `Stream`, e o `StreamBuilder` será notificado para reconstruir a interface com os novos dados.
+
+-----
+
+#### **3. A Pipeline de Operadores (`debounceTime`, `distinct`, `switchMap`)**
+
+```dart
+_searchQueryController.stream
+    .debounceTime(const Duration(milliseconds: 300)) // Espera 300ms de "silêncio"
+    .distinct() // Ignora termos repetidos
+    .switchMap((query) => Stream.fromFuture(_searchService.search(query))) // Cancela buscas antigas
+    .listen(
+      (results) {
+        _searchResultsController.add(results); // Envia os resultados para a UI
+      },
+      onError: (error) {
+        print('!!! ERRO no BLoC: $error');
+        _searchResultsController.addError(error); // Encaminha o erro
+      },
+    );
+```
+
+Este é o **coração reativo** do BLoC. Imagine que `_searchQueryController.stream` é o ponto de partida, e cada operador é uma estação de tratamento por onde os dados de busca passam antes de se tornarem resultados.
+
+  * **`_searchQueryController.stream`**: É a `Stream` de onde os termos de busca digitados pelo usuário começam a fluir.
+  * **`.debounceTime(const Duration(milliseconds: 300))`**:
+      * Este é um **operador de tempo**. Ele atua como um "silenciador".
+      * Quando o usuário digita rapidamente (ex: "a", "ap", "app"), cada letra é um evento na `Stream`. Sem `debounceTime`, cada digitação dispararia uma busca na API.
+      * O `debounceTime` espera 300 milissegundos. Se um novo evento (uma nova letra digitada) chega **antes** que os 300ms se passem desde o último evento, o timer é **reiniciado**.
+      * Só quando há um "silêncio" de 300ms (ou mais) após a última digitação é que o termo de busca final é emitido para o próximo operador. Isso é excelente para economizar chamadas de rede e otimizar a performance.
+  * **`.distinct()`**:
+      * Este é um **operador de filtragem**. Ele garante que um evento só será emitido para o próximo operador se for **diferente do evento *imediatamente anterior***.
+      * Por exemplo, se o usuário digitar "apple", apagar, e digitar "apple" novamente (exatamente a mesma string), o `distinct()` ignorará a segunda emissão se o valor for idêntico ao que passou por ele por último. Isso evita buscas desnecessárias para o mesmo termo.
+  * **`.switchMap((query) => Stream.fromFuture(_searchService.search(query)))`**:
+      * Este é um dos operadores mais poderosos e essenciais para cenários como busca. Ele é um **operador de transformação e achatamento**.
+      * **Transformação**: A função `(query) => Stream.fromFuture(_searchService.search(query))` pega o `query` (a string de busca) e o usa para chamar `_searchService.search(query)`. Este método retorna um `Future<List<String>>` (que simula a resposta da API). O `Stream.fromFuture()` converte esse `Future` em uma `Stream`.
+      * **Achatamento e Cancelamento**: O "switch" no nome é a chave. Imagine que você está buscando por "ap" e uma requisição está em andamento. De repente, o usuário digita "app".
+          * Quando "app" chega ao `switchMap`, ele **cancela (descarta)** a `Stream` interna que foi criada para "ap" (se ela ainda não tiver terminado).
+          * Em seguida, ele cria uma **nova `Stream` interna** para "app" (chamando `_searchService.search('app')`) e passa a "escutar" apenas essa nova `Stream`.
+          * Isso garante que sua UI **sempre receba os resultados da busca mais recente** e não se preocupe com resultados de buscas antigas e obsoletas, que poderiam chegar fora de ordem ou após a busca mais recente.
+  * **`.listen(...)`**:
+      * Finalmente, depois que os dados de busca passaram por todos esses operadores e foram transformados em uma `List<String>` de resultados, o método `listen()` é chamado.
+      * O `listen` é o **observador** final. Ele recebe os `results` processados e os adiciona ao `_searchResultsController.add(results)`. Essa é a maneira como os resultados são "publicados" para a `Stream` de saída, que por sua vez, será "escutada" pelo `StreamBuilder` na sua interface de usuário, fazendo com que ela se atualize.
+      * O `onError` é uma parte crucial do `listen` para lidar com erros que podem ocorrer em qualquer parte da pipeline (por exemplo, se a `_searchService.search` lançar uma exceção). Ele captura o erro e o re-emite para a `_searchResultsController`, permitindo que o `StreamBuilder` mostre uma mensagem de erro na UI.
+
+-----
+
+### Por que essa combinação é poderosa?
+
+Essa sequência de operadores e Subjects cria um fluxo de dados robusto e eficiente:
+
+1.  **Entrada Reativa**: A UI joga dados no `Sink` (via `TextField`).
+2.  **Otimização**: `debounceTime` reduz o número de chamadas desnecessárias à API. `distinct` evita buscas para termos idênticos.
+3.  **Gerenciamento de Assincronia**: `switchMap` lida elegantemente com múltiplas requisições assíncronas, garantindo que apenas o resultado mais relevante (o da última busca) seja exibido.
+4.  **Saída Reativa**: Os resultados processados são emitidos para a `Stream` de saída, que atualiza a UI automaticamente.
+5.  **Estado Inicial e Encapsulamento**: `BehaviorSubject.seeded` oferece um estado inicial, e o uso de `Sink` e `Stream` para expor as interfaces de entrada e saída protege a lógica interna.
+
+Este é um padrão muito comum e eficaz para gerenciar o estado em aplicações Flutter com o BLoC, e o RxDart fornece as ferramentas perfeitas para isso.
+
+

@@ -1,4 +1,4 @@
-## Unveiling the Heart of RxDart with BLoC
+## Example how using Streams with Rxdart
 
 Let’s break this down, explaining each term and how they work together.
 
@@ -218,7 +218,7 @@ Future<void> loadAllProducts() async {
 
 ==========
 
-## Desvendando o Coração do RxDart com BLoC (PT)
+## Exemplo de como usar Streams com Rxdart
 
 Vamos quebrar em partes, explicando cada termo e como eles trabalham juntos.
 
